@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 )
 
 func init() {
@@ -80,28 +81,48 @@ var defaultHandlerTmpl = `
 </html>
 `
 
-// NewHandler returns a handler.
-func NewHandler(s Story, t *template.Template) http.Handler {
-	if t == nil {
-		t = tpl
+// HandlerOption takes in a handler reference and returns
+// a function that applies options to a handler.
+type HandlerOption func(h *handler)
+
+// WithTemplate takes a Template and returns a HandlerOption
+func WithTemplate(t *template.Template) HandlerOption {
+	return func(h *handler) {
+		h.t = t
 	}
-	return handler{s, t}
+}
+
+// NewHandler returns a handler.
+func NewHandler(s Story, opts ...HandlerOption) http.Handler {
+	h := handler{s, tpl, defaultPathFn}
+	for _, opt := range opts {
+		opt(&h)
+	}
+	return h
 }
 
 type handler struct {
-	s Story
-	t *template.Template
+	s      Story
+	t      *template.Template
+	pathFn func(r *http.Request) string
 }
 
-func (h handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Path
+func defaultPathFn(r *http.Request) string {
+	path := strings.TrimSpace(r.URL.Path)
 	if path == "" || path == "/" {
 		path = "/intro"
 	}
-	path = path[1:]
-
+	return path[1:]
+}
+func WithPathFunc(fn func(r *http.Request) string) HandlerOption {
+	return func(h *handler) {
+		h.pathFn = fn
+	}
+}
+func (h handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	path := h.pathFn(r)
 	if chapter, ok := h.s[path]; ok {
-		err := tpl.Execute(w, chapter)
+		err := h.t.Execute(w, chapter)
 		if err != nil {
 			log.Printf("%v", err)
 			http.Error(w, "Something went wrong..", http.StatusInternalServerError)
